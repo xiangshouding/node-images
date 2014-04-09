@@ -35,7 +35,7 @@ images("input.jpg")                     //Load image from file
 + *libpng 1.5.x*
 + *jpeg-turbo 1.x.x*
 
-*Above these are installed by default most distributions*
+*Above these are installed by default most linux/unix*
 
 ## API 接口
 
