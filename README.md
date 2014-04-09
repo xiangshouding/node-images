@@ -29,12 +29,13 @@ images("input.jpg")                     //Load image from file
 ## Installation 安装
 	$ npm install images
 
-You will also need to install:
+*If the installation fails, try to install the following libraries.*
 
-+ giflib 4.x.x
-+ libpng 1.5.x
-+ jpeg-turbo 1.x.x
++ *giflib 4.x.x*
++ *libpng 1.5.x*
++ *jpeg-turbo 1.x.x*
 
+*Above these are installed by default most distributions*
 
 ## API 接口
 
