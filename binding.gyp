@@ -52,7 +52,7 @@
 							'<(THIRD_PATH)/libjpeg-turbo/include',
 						]
                     }, {
-                        'libraries': ['-ljpeg']
+                        'libraries': ['-ljpeg', '-lz', '-lm']
                     }]
                 ]
             }],
@@ -65,7 +65,7 @@
                         'include_dirs': [
                             '<(THIRD_PATH)/giflib/lib']
                     }, {
-                        'libraries': ['-lgif']
+                        'libraries': ['-lgif', '-lz', '-lm']
                     }]
                 ]
             }],
