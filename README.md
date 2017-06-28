@@ -132,3 +132,9 @@ Get used memory (in bytes)
 ### images.gc()
 Forced garbage collection  
 强制调用V8的垃圾回收机制
+
+## ChangeLog
+
+### 2.2.1
+- Support Node 8.x on MacOS
+- 支持 MacOS 平台下的 Node 8.x
