@@ -1,16 +1,56 @@
-//
-// Image.cc
-//
-// Copyright (c) 2013 ZhangYuanwei <zhangyuanwei1988@gmail.com>
+/*
+ * Image.cc
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2013 ZhangYuanwei <zhangyuanwei1988@gmail.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sub license, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * The above copyright notice and this permission notice (including the
+ * next paragraph) shall be included in all copies or substantial portions
+ * of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
+ * IN NO EVENT SHALL INTEL AND/OR ITS SUPPLIERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
 
 #include "Image.h"
 #include "Resize.h"
+#include <node_buffer.h>
 
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <iostream>
 
-#include <node_buffer.h>
+
+
+using v8::Isolate;
+using v8::FunctionCallbackInfo;
+using v8::FunctionTemplate;
+using v8::Function;
+using v8::Value;
+using v8::Number;
+using v8::String;
+using v8::Exception;
+using v8::Persistent;
+using v8::Local;
+using v8::MaybeLocal;
+using v8::ObjectTemplate;
+using v8::PropertyCallbackInfo;
+using v8::Object;
 
 
 //#define SET_ERROR_FILE_LINE(file, line, msg) Image::SetError( file #line msg)
@@ -19,21 +59,24 @@
 #define STRINGFY(n) #n
 #define MERGE_FILE_LINE(file, line, msg) ( file ":" STRINGFY(line) " " msg)
 #define FILE_LINE(msg) MERGE_FILE_LINE(__FILE__, __LINE__, msg)
-#define ERRORR(type, msg) Exception::type##Error(String::New(msg))
-#define THROW(err) ThrowException(err)
-
+#define ERROR(type, msg) Exception::type(String::NewFromUtf8( Isolate::GetCurrent(), msg ))
+#define THROW(err) Isolate::GetCurrent()->ThrowException(err)
 #define SET_ERROR(msg) (Image::setError(FILE_LINE(msg)))
 #define GET_ERROR() (Image::getError())
-#define THROW_ERROR(msg) THROW(ERRORR(,FILE_LINE(msg)))
+#define THROW_ERROR(msg) THROW(ERROR(Error,FILE_LINE(msg)))
 #define THROW_GET_ERROR() THROW(GET_ERROR())
 
-#define THROW_TYPE_ERROR(msg) THROW(ERRORR(Type, FILE_LINE(msg)))
+#define THROW_TYPE_ERROR(msg) THROW(ERROR(TypeError, FILE_LINE(msg)))
 #define THROW_INVALID_ARGUMENTS_ERROR(msg) THROW_TYPE_ERROR("Invalid arguments" msg)
 
 #define DEFAULT_WIDTH_LIMIT  10240 // default limit 10000x10000
 #define DEFAULT_HEIGHT_LIMIT 10240 // default limit 10000x10000
 
-Persistent<FunctionTemplate> Image::constructor;
+#define AdjustAmountOfExternalAllocatedMemory(bc) static_cast<int>( \
+        v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(bc));
+
+Persistent<Function> Image::constructor;
+
 //size_t Image::survival;
 ImageCodec *Image::codecs;
 
@@ -41,40 +84,48 @@ size_t Image::maxWidth = DEFAULT_WIDTH_LIMIT;
 size_t Image::maxHeight = DEFAULT_HEIGHT_LIMIT;
 const char *Image::error = NULL;
 
-void Image::Initialize(Handle<Object> target){ // {{{
-    HandleScope scope;
+void Image::Init(Local<Object> exports) { // {{{
+    Isolate *isolate = exports->GetIsolate();
+
     regAllCodecs();
     //survival = 0;
 
     // Constructor
-    Local<FunctionTemplate> tpl = FunctionTemplate::New(New);
-    constructor = Persistent<FunctionTemplate>::New(tpl);
-    constructor->InstanceTemplate()->SetInternalFieldCount(1);
-    constructor->SetClassName(String::NewSymbol("Image"));
+    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
+    tpl->SetClassName(String::NewFromUtf8(isolate, "Image"));
+    tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
     // Prototype
-    Local<ObjectTemplate> proto = constructor->PrototypeTemplate();
-    NODE_SET_PROTOTYPE_METHOD(constructor, "resize", Resize);
-    NODE_SET_PROTOTYPE_METHOD(constructor, "fillColor", FillColor);
-    NODE_SET_PROTOTYPE_METHOD(constructor, "loadFromBuffer", LoadFromBuffer);
-    NODE_SET_PROTOTYPE_METHOD(constructor, "copyFromImage", CopyFromImage);
-    NODE_SET_PROTOTYPE_METHOD(constructor, "drawImage", DrawImage);
-    NODE_SET_PROTOTYPE_METHOD(constructor, "toBuffer", ToBuffer);
+    Local<ObjectTemplate> proto = tpl->PrototypeTemplate();
 
-    proto->SetAccessor(String::NewSymbol("width"), GetWidth, SetWidth);
-    proto->SetAccessor(String::NewSymbol("height"), GetHeight, SetHeight);
-    proto->SetAccessor(String::NewSymbol("transparent"), GetTransparent);
+    NODE_SET_PROTOTYPE_METHOD(tpl, "resize", Resize);
+    NODE_SET_PROTOTYPE_METHOD(tpl, "fillColor", FillColor);
+    NODE_SET_PROTOTYPE_METHOD(tpl, "loadFromBuffer", LoadFromBuffer);
+    NODE_SET_PROTOTYPE_METHOD(tpl, "copyFromImage", CopyFromImage);
+    NODE_SET_PROTOTYPE_METHOD(tpl, "drawImage", DrawImage);
+    NODE_SET_PROTOTYPE_METHOD(tpl, "toBuffer", ToBuffer);
 
-    NODE_DEFINE_CONSTANT(target, TYPE_PNG);
-    NODE_DEFINE_CONSTANT(target, TYPE_JPEG);
-    NODE_DEFINE_CONSTANT(target, TYPE_GIF);
-    NODE_DEFINE_CONSTANT(target, TYPE_BMP);
-    NODE_DEFINE_CONSTANT(target, TYPE_RAW);
+    proto->SetAccessor(String::NewFromUtf8(isolate, "width"), GetWidth, SetWidth);
+    proto->SetAccessor(String::NewFromUtf8(isolate, "height"), GetHeight, SetHeight);
+    proto->SetAccessor(String::NewFromUtf8(isolate, "transparent"), GetTransparent);
 
-    target->SetAccessor(String::NewSymbol("maxWidth"), GetMaxWidth, SetMaxWidth);
-    target->SetAccessor(String::NewSymbol("maxHeight"), GetMaxHeight, SetMaxHeight);
+    constructor.Reset(isolate, tpl->GetFunction());
 
-    target->Set(String::NewSymbol("Image"), constructor->GetFunction());
+    NODE_DEFINE_CONSTANT(exports, TYPE_PNG);
+    NODE_DEFINE_CONSTANT(exports, TYPE_JPEG);
+    NODE_DEFINE_CONSTANT(exports, TYPE_GIF);
+    NODE_DEFINE_CONSTANT(exports, TYPE_BMP);
+    NODE_DEFINE_CONSTANT(exports, TYPE_RAW);
+    NODE_DEFINE_CONSTANT(exports, TYPE_WEBP);
+
+
+    exports->SetAccessor(String::NewFromUtf8(isolate, "maxWidth"), GetMaxWidth, SetMaxWidth);
+    exports->SetAccessor(String::NewFromUtf8(isolate, "maxHeight"), GetMaxHeight, SetMaxHeight);
+    exports->SetAccessor(String::NewFromUtf8(isolate, "usedMemory"), GetUsedMemory);
+    NODE_SET_METHOD(exports, "gc", GC);
+
+    exports->Set(String::NewFromUtf8(isolate, "Image"), tpl->GetFunction());
+
 } //}}}
 
 ImageState Image::setError(const char * err){ // {{{
@@ -83,7 +134,7 @@ ImageState Image::setError(const char * err){ // {{{
 } // }}}
 
 Local<Value> Image::getError(){ // {{{
-    Local<Value> err = Exception::Error(String::New(error ? error : "Unknow Error"));
+    Local<Value> err = Exception::Error(String::NewFromUtf8(Isolate::GetCurrent(), error ? error : "Unknow Error"));
     error = NULL;
     return err;
 } // }}}
@@ -92,28 +143,42 @@ bool Image::isError(){ // {{{
     return error != NULL;
 } // }}}
 
-Handle<Value> Image::GetMaxWidth(Local<String> prop, const AccessorInfo &info){ // {{{
-    HandleScope scope;
-    return scope.Close(Number::New(maxWidth));
+void Image::GetMaxWidth(Local<String> property, const PropertyCallbackInfo<Value> &args) { // {{{
+    Isolate *isolate = args.GetIsolate();
+    args.GetReturnValue().Set(Number::New(isolate, maxWidth));
+
 } // }}}
 
-void Image::SetMaxWidth(Local<String> prop, Local<Value> value, const AccessorInfo &info){ // {{{
+void Image::SetMaxWidth(Local<String> property, Local<Value> value, const PropertyCallbackInfo<void> &args) { // {{{
     if(value->IsNumber())
         maxWidth = value->Uint32Value();
 } // }}}
 
-Handle<Value> Image::GetMaxHeight(Local<String> prop, const AccessorInfo &info){ // {{{
-    HandleScope scope;
-    return scope.Close(Number::New(maxHeight));
+void Image::GetMaxHeight(Local<String> property, const PropertyCallbackInfo<Value> &args) { // {{{
+
 } // }}}
 
-void Image::SetMaxHeight(Local<String> prop, Local<Value> value, const AccessorInfo &info){ // {{{
+void Image::SetMaxHeight(Local<String> property, Local<Value> value, const PropertyCallbackInfo<void> &args) { // {{{
     if(value->IsNumber())
         maxHeight = value->Uint32Value();
 } // }}}
 
-Handle<Value> Image::New(const Arguments &args){ // {{{
-    HandleScope scope;
+// Memory
+size_t Image::usedMemory = 0;
+
+void Image::GetUsedMemory(Local<String> property, const PropertyCallbackInfo<Value>&args) { // {{{
+    Isolate *isolate = args.GetIsolate();
+    args.GetReturnValue().Set(Number::New(isolate, usedMemory));
+} // }}}
+
+void Image::GC(const FunctionCallbackInfo <Value> &args) { // {{{
+    //V8::LowMemoryNotification();
+    Isolate *isolate = args.GetIsolate();
+    args.GetReturnValue().Set(v8::Undefined(isolate));
+} // }}}
+
+void Image::New(const FunctionCallbackInfo<Value> &args) { // {{{
+
     Image *img;
 
     size_t width, height;
@@ -125,36 +190,38 @@ Handle<Value> Image::New(const Arguments &args){ // {{{
 
     img = new Image();
 
-    if(img->pixels->Malloc(width, height) != SUCCESS){
-        return THROW_GET_ERROR();
+    if(img->pixels->Malloc(width, height) != SUCCESS) {
+        THROW_GET_ERROR();
     }
 
     img->Wrap(args.This());
-    return args.This();
+
+    args.GetReturnValue().Set(args.This());
 } // }}}
 
-Handle<Value> Image::GetWidth(Local<String> prop, const AccessorInfo &info){ // {{{
-    HandleScope scope;
-    Image *img = ObjectWrap::Unwrap<Image>(info.This());
-    return scope.Close(Number::New(img->pixels->width));
+void Image::GetWidth(Local<String> property, const PropertyCallbackInfo<Value> &args) { // {{{
+    Image *img = node::ObjectWrap::Unwrap<Image>(args.This());
+    Isolate *isolate = args.GetIsolate();
+    args.GetReturnValue().Set(Number::New(isolate, img->pixels->width));
 } // }}}
 
-void Image::SetWidth(Local<String> prop, Local<Value> value, const AccessorInfo &info){ // {{{
+void Image::SetWidth(Local<String> property, Local<Value> value, const PropertyCallbackInfo<void> &args){ // {{{
     if(value->IsNumber()){
-        Image *img = ObjectWrap::Unwrap<Image>(info.This());
+        Image *img = node::ObjectWrap::Unwrap<Image>(args.This());
         img->pixels->SetWidth(value->Uint32Value());
     }
 } // }}}
 
-Handle<Value> Image::GetHeight(Local<String> prop, const AccessorInfo &info){ // {{{
-    HandleScope scope;
-    Image *img = ObjectWrap::Unwrap<Image>(info.This());
-    return scope.Close(Number::New(img->pixels->height));
+void Image::GetHeight(Local<String> property, const PropertyCallbackInfo<Value> &args) { // {{{
+
+    Image *img = node::ObjectWrap::Unwrap<Image>(args.This());
+    args.GetReturnValue().Set(Number::New(args.GetIsolate(), img->pixels->height));
+
 } // }}}
 
-void Image::SetHeight(Local<String> prop, Local<Value> value, const AccessorInfo &info){ // {{{
+void Image::SetHeight(Local<String> property, Local<Value> value, const PropertyCallbackInfo<void> &args) { // {{{
     if(value->IsNumber()){
-        Image *img = ObjectWrap::Unwrap<Image>(info.This());
+        Image *img = node::ObjectWrap::Unwrap<Image>(args.This());
         img->pixels->SetHeight(value->Uint32Value());
     }
 } // }}}
@@ -164,13 +231,15 @@ void Image::SetHeight(Local<String> prop, Local<Value> value, const AccessorInfo
  * Scale image with bicubic.
  * @since 1.5.5+
  */
-Handle<Value>Image::Resize(const Arguments &args) {
-    HandleScope scope;
+void Image::Resize(const FunctionCallbackInfo<Value> &args) {
+
     char *filter = NULL;
 
     if( (!args[0]->IsNull() && !args[0]->IsUndefined () && !args[0]->IsNumber()) ||
-        (!args[1]->IsNull() && !args[1]->IsUndefined () && !args[1]->IsNumber()) )
-        return THROW_INVALID_ARGUMENTS_ERROR("Arguments error");
+            (!args[1]->IsNull() && !args[1]->IsUndefined () && !args[1]->IsNumber()) ) {
+        THROW_INVALID_ARGUMENTS_ERROR("Arguments error");
+        return;
+    }
 
     if ( args[2]->IsString() ) {
         String::Utf8Value cstr(args[2]);
@@ -178,29 +247,30 @@ Handle<Value>Image::Resize(const Arguments &args) {
         strcpy(filter, *cstr);
     }
 
-    Image *img = ObjectWrap::Unwrap<Image>(args.This());
+    Image *img = node::ObjectWrap::Unwrap<Image>(args.This());
     img->pixels->Resize(args[0]->ToNumber()->Value(), args[1]->ToNumber()->Value(), filter);
 
-    return scope.Close(Undefined());
+    args.GetReturnValue().Set(v8::Undefined(args.GetIsolate()));
 }
 
 
 
-Handle<Value> Image::GetTransparent(Local<String> prop, const AccessorInfo &info){ // {{{
-    HandleScope scope;
-    Image *img = ObjectWrap::Unwrap<Image>(info.This());
-    return scope.Close(Number::New(img->pixels->type));
+void Image::GetTransparent(Local<String> property, const PropertyCallbackInfo<Value> &args) { // {{{
+    Image *img = node::ObjectWrap::Unwrap<Image>(args.This());
+    args.GetReturnValue().Set(Number::New(args.GetIsolate(), img->pixels->type));
 } // }}}
 
-Handle<Value> Image::FillColor(const Arguments &args){ // {{{
-    HandleScope scope;
+void Image::FillColor(const FunctionCallbackInfo<Value> &args) { // {{{
+
     Image *img;
     Pixel color, *cp;
 
     if(!args[0]->IsNumber()
-    || !args[1]->IsNumber()
-    || !args[2]->IsNumber())
-        return THROW_INVALID_ARGUMENTS_ERROR("");
+            || !args[1]->IsNumber()
+            || !args[2]->IsNumber()) {
+        THROW_INVALID_ARGUMENTS_ERROR("");
+        return;
+    }
 
     cp = &color;
     cp->R = args[0]->Uint32Value();
@@ -212,14 +282,14 @@ Handle<Value> Image::FillColor(const Arguments &args){ // {{{
         cp->A = (uint8_t) (args[3]->NumberValue() * 0xFF);
     }
 
-    img = ObjectWrap::Unwrap<Image>(args.This());
+    img = node::ObjectWrap::Unwrap<Image>(args.This());
     img->pixels->Fill(cp);
 
-    return scope.Close(Undefined());
+    args.GetReturnValue().Set(v8::Undefined(args.GetIsolate()));
 } // }}}
 
-Handle<Value> Image::LoadFromBuffer(const Arguments &args){ // {{{
-    HandleScope scope;
+void Image::LoadFromBuffer(const FunctionCallbackInfo<Value> &args) { // {{{
+
     Image *img;
 
     uint8_t *buffer;
@@ -229,14 +299,15 @@ Handle<Value> Image::LoadFromBuffer(const Arguments &args){ // {{{
     ImageDecoder decoder;
     ImageData input_data, *input;
 
-    if(!Buffer::HasInstance(args[0])){
-        return THROW_INVALID_ARGUMENTS_ERROR(": first argument must be a buffer.");
+    if(!node::Buffer::HasInstance(args[0])){
+        THROW_TYPE_ERROR(": first argument must be a buffer.");
+        return;
     }
 
-    img = ObjectWrap::Unwrap<Image>(args.This());
+    img = node::ObjectWrap::Unwrap<Image>(args.This());
 
-    buffer = (uint8_t *) Buffer::Data(args[0]->ToObject());
-    length = Buffer::Length(args[0]->ToObject());
+    buffer = (uint8_t *) node::Buffer::Data(args[0]);
+    length = (unsigned) node::Buffer::Length(args[0]);
 
     start = 0;
     if(args[1]->IsNumber()){
@@ -247,7 +318,8 @@ Handle<Value> Image::LoadFromBuffer(const Arguments &args){ // {{{
     if(args[2]->IsNumber()){
         end = args[2]->Uint32Value();
         if(end < start || end > length){
-            return THROW_INVALID_ARGUMENTS_ERROR("");
+            THROW_TYPE_ERROR("");
+            return;
         }
     }
 
@@ -261,74 +333,76 @@ Handle<Value> Image::LoadFromBuffer(const Arguments &args){ // {{{
         decoder = codec->decoder;
         input->position = 0;
         if(decoder != NULL && decoder(img->pixels, input) == SUCCESS){
-            return scope.Close(Undefined());
+            args.GetReturnValue().Set(v8::Undefined(args.GetIsolate()));
+            return;
         }
         codec = codec->next;
     }
-    return isError() ? (THROW_GET_ERROR()) : THROW_ERROR("Unknow format");
+    isError() ? (THROW_GET_ERROR()) : THROW_ERROR("Unknow format");
+    return;
 } // }}}
 
-Handle<Value> Image::CopyFromImage(const Arguments &args){ // {{{
-    HandleScope scope;
+void Image::CopyFromImage(const FunctionCallbackInfo<Value> &args) { // {{{
+
     Image *src, *dst;
     uint32_t x, y, w, h;
 
     Local<Object> obj = args[0]->ToObject();
 
-    if(!Image::constructor->HasInstance(obj))
-        return THROW_INVALID_ARGUMENTS_ERROR("");
+    //@TODO
 
-    src = ObjectWrap::Unwrap<Image>(obj);
-    dst = ObjectWrap::Unwrap<Image>(args.This());
+    src = node::ObjectWrap::Unwrap<Image>(obj);
+    dst = node::ObjectWrap::Unwrap<Image>(args.This());
 
     x = y = 0;
     w = src->pixels->width;
     h = src->pixels->height;
 
     if(args[1]->IsNumber()   // x
-    && args[2]->IsNumber()){ // y
+            && args[2]->IsNumber()){ // y
         x = args[1]->Uint32Value();
         y = args[2]->Uint32Value();
     }
 
     if(args[3]->IsNumber()   // w
-    && args[4]->IsNumber()){ // h
+            && args[4]->IsNumber()){ // h
         w = args[3]->Uint32Value();
         h = args[4]->Uint32Value();
     }
 
     if(dst->pixels->CopyFrom(src->pixels, x, y, w, h) != SUCCESS){
-        return THROW_GET_ERROR();
+        THROW_GET_ERROR();
     }
 
-    return scope.Close(Undefined());
 }// }}}
 
-Handle<Value> Image::DrawImage(const Arguments &args) { // {{{
-    HandleScope scope;
+void Image::DrawImage(const FunctionCallbackInfo<Value> &args) { // {{{
 
     Image *src, *dst;
     size_t x, y;
 
     Local<Object> obj = args[0]->ToObject();
 
-    if(!Image::constructor->HasInstance(obj)
-    || !args[1]->IsNumber() // x
-    || !args[2]->IsNumber()) // y
-        return THROW_INVALID_ARGUMENTS_ERROR("");
+    //if(!NanHasInstance(Image::constructor, obj)
+    //   || !args[1]->IsNumber() // x
+    //   || !args[2]->IsNumber()) // y
+    if (!args[1]->IsNumber() || !args[2]->IsNumber()) {
+        THROW_INVALID_ARGUMENTS_ERROR("");
+        return;
+    }
 
-    src = ObjectWrap::Unwrap<Image>(obj);
-    dst = ObjectWrap::Unwrap<Image>(args.This());
+    src = node::ObjectWrap::Unwrap<Image>(obj);
+    dst = node::ObjectWrap::Unwrap<Image>(args.This());
 
     x = args[1]->Uint32Value();
     y = args[2]->Uint32Value();
 
     dst->pixels->Draw(src->pixels, x, y);
-    return scope.Close(Undefined());
+
+    args.GetReturnValue().Set(v8::Undefined(args.GetIsolate()));
 } // }}}
 
-Handle<Value> Image::ToBuffer(const Arguments &args){ //{{{
-    HandleScope scope;
+void Image::ToBuffer(const FunctionCallbackInfo<Value> &args) { //{{{
 
     Image *img;
     ImageType type;
@@ -339,26 +413,28 @@ Handle<Value> Image::ToBuffer(const Arguments &args){ //{{{
 
     ImageData output_data, *output;
 
-    Buffer *buffer;
+    Local<Object> buffer;
+
     int length;
 
-    if(!args[0]->IsNumber())
-        return THROW_INVALID_ARGUMENTS_ERROR("");
-    type = (ImageType) args[0]->Uint32Value();
-
-    config = NULL;
-    if(Buffer::HasInstance(args[1])){
-        config = &_config;
-        config->data = Buffer::Data(args[1]->ToObject());
-        config->length = Buffer::Length(args[1]->ToObject());
+    if(!args[0]->IsNumber()) {
+        THROW_INVALID_ARGUMENTS_ERROR("");
+        return;
     }
 
-    img = ObjectWrap::Unwrap<Image>(args.This());
+    type = (ImageType) args[0]->Uint32Value();
+    config = NULL;
+    if(node::Buffer::HasInstance(args[1])){
+        config = &_config;
+        config->data = node::Buffer::Data(args[1]->ToObject());
+        config->length = node::Buffer::Length(args[1]->ToObject());
+    }
+
+    img = node::ObjectWrap::Unwrap<Image>(args.This());
     pixels = img->pixels;
 
     if(pixels->data != NULL){
         codec = codecs;
-
         output = &output_data;
         output->data = NULL;
         output->length = 0;
@@ -370,25 +446,31 @@ Handle<Value> Image::ToBuffer(const Arguments &args){ //{{{
                 if(encoder != NULL){
                     if(encoder(pixels, output, config) == SUCCESS){
                         length = output->position;
-                        buffer = Buffer::New(length);
-                        memcpy(Buffer::Data(buffer), output->data, length);
+                        MaybeLocal<Object> maybeBuffer = node::Buffer::New(args.GetIsolate(), (size_t) length);
+                        maybeBuffer.ToLocal(&buffer);
+                        memcpy(node::Buffer::Data(buffer), output->data, length);
                         free(output->data);
-                        return scope.Close(buffer->handle_);
+                        args.GetReturnValue().Set(buffer);
+                        return;
                     }else{
                         if(output->data != NULL)
                             free(output->data);
-                        return  THROW_ERROR("Encode fail.");
+                        THROW_ERROR("Encode fail.");
+                        return;
                     }
                 }else{
-                    return THROW_ERROR("Can't encode to this format.");
+                    THROW_ERROR("Can't encode to this format.");
                 }
             }
             codec = codec->next;
         }
-        return isError() ? (THROW_GET_ERROR()) : (THROW_ERROR("Unsupported type."));
+        isError() ? (THROW_GET_ERROR()) : (THROW_ERROR("Unsupported type."));
+        return;
     }else{
-        return THROW_ERROR("Image uninitialized.");
+        THROW_ERROR("Image uninitialized.");
+        return;
     }
+
 } // }}}
 
 void Image::regCodec(ImageDecoder decoder, ImageEncoder encoder, ImageType type){ // {{{
@@ -402,11 +484,14 @@ void Image::regCodec(ImageDecoder decoder, ImageEncoder encoder, ImageType type)
 } // }}}
 
 Image::Image(){ // {{{
+    size_t size;
     pixels = (PixelArray *) malloc(sizeof(PixelArray));
     pixels->width = pixels->height = 0;
     pixels->type = EMPTY;
     pixels->data = NULL;
-    V8::AdjustAmountOfExternalAllocatedMemory(sizeof(PixelArray) + sizeof(Image));
+    size = sizeof(PixelArray) + sizeof(Image);
+    AdjustAmountOfExternalAllocatedMemory(size);
+    usedMemory += size;
     //survival++;
 } // }}}
 
@@ -415,7 +500,8 @@ Image::~Image(){ // {{{
     size = sizeof(PixelArray) + sizeof(Image);
     pixels->Free();
     free(pixels);
-    V8::AdjustAmountOfExternalAllocatedMemory(-size);
+    AdjustAmountOfExternalAllocatedMemory(-size);
+    usedMemory -= size;
     //survival--;
     //printf("survival:%d\n", survival);
 } // }}}
@@ -458,7 +544,9 @@ ImageState PixelArray::Malloc(size_t w, size_t h){ // {{{
             data[height] = line;
         }
     }
-    V8::AdjustAmountOfExternalAllocatedMemory(Size());
+    size = Size();
+    AdjustAmountOfExternalAllocatedMemory(size);
+    Image::usedMemory += size;
     return SUCCESS;
 
 free:
@@ -474,7 +562,7 @@ fail:
 } // }}}
 
 void PixelArray::Free(){ // {{{
-    size_t h;
+    size_t h, size;
 
     if(data != NULL){
         h = height;
@@ -482,7 +570,9 @@ void PixelArray::Free(){ // {{{
             if(data[h] != NULL) free(data[h]);
         }
         free(data);
-        V8::AdjustAmountOfExternalAllocatedMemory(-Size());
+        size = Size();
+        AdjustAmountOfExternalAllocatedMemory(-size);
+        Image::usedMemory -= size;
     }
 
     width = height = 0;
@@ -603,7 +693,8 @@ ImageState PixelArray::SetWidth(size_t w){ // {{{
 
     if(data != NULL){
         if(w > Image::maxWidth){
-            return SET_ERROR("Beyond the width limit.");
+            SET_ERROR("Beyond the width limit.");
+            return FAIL;
         }
 
         if(w == width){
@@ -612,7 +703,8 @@ ImageState PixelArray::SetWidth(size_t w){ // {{{
 
         size = w * sizeof(size_t);
         if((index = (size_t *) malloc(size)) == NULL){
-            return SET_ERROR("Out of memory.");
+            SET_ERROR("Out of memory.");
+            return FAIL;
         }
 
         scale = ((double) width) / w;
@@ -749,13 +841,13 @@ void PixelArray::DetectTransparent(){ // {{{
     type = opaque ? SOLID : EMPTY;
 } // }}}
 
-
 extern "C" {
-    void NODE_MODULE_EXPORT initialize (Handle<Object> target) { // {{{
-        Image::Initialize(target);
-    } // }}}
+void InitAll (Local<Object> exports) { // {{{
+    Image::Init(exports);
+} // }}}
 }
 
 
-NODE_MODULE(binding, initialize);
+NODE_MODULE(binding, InitAll);
+
 // vim600: sw=4 ts=4 fdm=marker syn=cpp
